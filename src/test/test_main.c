@@ -7,6 +7,7 @@
 /* External test suite declarations */
 extern test_suite_t radix_test_suite;
 extern test_suite_t route_table_test_suite;
+extern test_suite_t freebsd_integration_test_suite;
 
 /* Function to count tests in a suite */
 static void count_tests_in_suite(test_suite_t* suite) {
@@ -32,11 +33,13 @@ int main(int argc, char* argv[]) {
     /* Count tests in each suite */
     count_tests_in_suite(&radix_test_suite);
     count_tests_in_suite(&route_table_test_suite);
+    count_tests_in_suite(&freebsd_integration_test_suite);
 
     /* Define test suites to run */
     test_suite_t* test_suites[] = {
         &radix_test_suite,
-        &route_table_test_suite
+        &route_table_test_suite,
+        &freebsd_integration_test_suite
         /* Add more test suites here as they're implemented */
     };
 

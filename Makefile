@@ -50,7 +50,8 @@ TEST_FRAMEWORK_SOURCES = $(SRC_DIR)/test/test_framework.c
 ROUTE_LIB_STUBS_SOURCES = $(SRC_DIR)/lib/route_lib_stubs.c
 TEST_SOURCES = $(SRC_DIR)/test/test_main.c \
                $(SRC_DIR)/test/test_radix.c \
-               $(SRC_DIR)/test/test_route_table.c
+               $(SRC_DIR)/test/test_route_table.c \
+               $(SRC_DIR)/test/test_freebsd_integration.c
 
 # Object files
 KERNEL_COMPAT_OBJS = $(KERNEL_COMPAT_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
@@ -68,6 +69,7 @@ ROUTE_LIB_STUBS_LIB = $(LIB_DIR)/libroute_stubs.a
 # Executables
 TEST_EXE = $(BIN_DIR)/route_tests
 DEMO_EXE = $(BIN_DIR)/route_demo
+SCALE_TEST_EXE = $(BIN_DIR)/test_radix_scale
 
 # Default target
 all: $(TEST_EXE)
@@ -105,8 +107,12 @@ $(TEST_EXE): $(TEST_OBJS) $(TEST_FRAMEWORK_LIB) $(FREEBSD_ROUTE_LIB) $(KERNEL_CO
 $(DEMO_EXE): $(OBJ_DIR)/examples/route_demo.o $(FREEBSD_ROUTE_LIB) $(KERNEL_COMPAT_LIB) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(PLATFORM_LIBS)
 
+# Build scale test executable
+$(SCALE_TEST_EXE): $(OBJ_DIR)/test/test_radix_scale.o $(TEST_FRAMEWORK_LIB) $(FREEBSD_ROUTE_LIB) $(KERNEL_COMPAT_LIB) $(ROUTE_LIB_STUBS_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(PLATFORM_LIBS)
+
 # Phony targets
-.PHONY: all clean test test-verbose test-freebsd test-freebsd-quick install uninstall help
+.PHONY: all clean test test-verbose test-freebsd test-freebsd-quick test-radix-scale test_radix_scale install uninstall help
 
 # Run tests
 test: $(TEST_EXE)
@@ -143,6 +149,17 @@ test-freebsd: $(FREEBSD_COMPONENTS_TEST)
 test-freebsd-quick: $(FREEBSD_COMPONENTS_TEST)
 	@echo "⚡ Running Quick FreeBSD Components Test..."
 	QUICK_TEST=1 ./$(FREEBSD_COMPONENTS_TEST)
+
+# Scale testing targets
+test-radix-scale: $(SCALE_TEST_EXE)
+	@echo "🚀 Running Radix Scale Test (10M routes)..."
+	@echo "   This will test with 10 million route operations"
+	./$(SCALE_TEST_EXE)
+
+test_radix_scale: $(SCALE_TEST_EXE)
+	@echo "🚀 Running Radix Scale Test (10M routes)..."
+	@echo "   This will test with 10 million route operations"
+	./$(SCALE_TEST_EXE)
 
 # Clean build artifacts
 clean:

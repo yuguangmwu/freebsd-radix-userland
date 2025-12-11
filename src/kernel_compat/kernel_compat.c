@@ -68,3 +68,17 @@ int sa_equal(const struct sockaddr* a, const struct sockaddr* b) {
 void time_init(void) {
     time_second = time(NULL);
 }
+
+/* Kernel compatibility initialization */
+void kernel_compat_init(void) {
+    /* Initialize time subsystem */
+    time_init();
+
+    /* Initialize epoch subsystem (no-op in userland) */
+    net_epoch_preempt = NULL;
+
+    /* Set maximum FIB number */
+    maxfib = 16;
+
+    printf("[KERNEL_COMPAT] Initialized kernel compatibility layer\n");
+}
