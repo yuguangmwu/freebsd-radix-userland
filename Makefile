@@ -3,7 +3,7 @@
 
 # Compiler settings
 CC = clang
-CFLAGS = -std=c99 -Wall -Wextra -Werror
+CFLAGS = -std=c99 -Wall -Wextra -Werror -DUSERLAND_RADIX
 CFLAGS_DEBUG = -O0 -g -DDEBUG
 CFLAGS_RELEASE = -O2 -DNDEBUG
 
@@ -47,6 +47,7 @@ INCLUDES = -I$(SRC_DIR)/include \
 KERNEL_COMPAT_SOURCES = $(SRC_DIR)/kernel_compat/kernel_compat.c
 FREEBSD_SOURCES = $(SRC_DIR)/freebsd/radix.c
 TEST_FRAMEWORK_SOURCES = $(SRC_DIR)/test/test_framework.c
+ROUTE_LIB_STUBS_SOURCES = $(SRC_DIR)/lib/route_lib_stubs.c
 TEST_SOURCES = $(SRC_DIR)/test/test_main.c \
                $(SRC_DIR)/test/test_radix.c \
                $(SRC_DIR)/test/test_route_table.c
@@ -55,12 +56,14 @@ TEST_SOURCES = $(SRC_DIR)/test/test_main.c \
 KERNEL_COMPAT_OBJS = $(KERNEL_COMPAT_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 FREEBSD_OBJS = $(FREEBSD_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+ROUTE_LIB_STUBS_OBJS = $(ROUTE_LIB_STUBS_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 TEST_OBJS = $(TEST_SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 # Libraries
 KERNEL_COMPAT_LIB = $(LIB_DIR)/libkernel_compat.a
 FREEBSD_ROUTE_LIB = $(LIB_DIR)/libfreebsd_route.a
 TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest_framework.a
+ROUTE_LIB_STUBS_LIB = $(LIB_DIR)/libroute_stubs.a
 
 # Executables
 TEST_EXE = $(BIN_DIR)/route_tests
@@ -90,8 +93,12 @@ $(FREEBSD_ROUTE_LIB): $(FREEBSD_OBJS) $(KERNEL_COMPAT_LIB) | $(LIB_DIR)
 $(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
 	ar rcs $@ $^
 
+# Build route lib stubs library
+$(ROUTE_LIB_STUBS_LIB): $(ROUTE_LIB_STUBS_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
 # Build test executable
-$(TEST_EXE): $(TEST_OBJS) $(TEST_FRAMEWORK_LIB) $(FREEBSD_ROUTE_LIB) $(KERNEL_COMPAT_LIB) | $(BIN_DIR)
+$(TEST_EXE): $(TEST_OBJS) $(TEST_FRAMEWORK_LIB) $(FREEBSD_ROUTE_LIB) $(KERNEL_COMPAT_LIB) $(ROUTE_LIB_STUBS_LIB) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ $(PLATFORM_LIBS)
 
 # Build demo executable
@@ -99,7 +106,7 @@ $(DEMO_EXE): $(OBJ_DIR)/examples/route_demo.o $(FREEBSD_ROUTE_LIB) $(KERNEL_COMP
 	$(CC) $(CFLAGS) -o $@ $^ $(PLATFORM_LIBS)
 
 # Phony targets
-.PHONY: all clean test test-verbose install uninstall help
+.PHONY: all clean test test-verbose test-freebsd test-freebsd-quick install uninstall help
 
 # Run tests
 test: $(TEST_EXE)
@@ -109,6 +116,33 @@ test: $(TEST_EXE)
 test-verbose: $(TEST_EXE)
 	@echo "Running tests with verbose output..."
 	./$(TEST_EXE) --verbose
+
+# Comprehensive FreeBSD Test Suite
+FREEBSD_COMPREHENSIVE_TEST = $(BIN_DIR)/test_freebsd_comprehensive
+$(FREEBSD_COMPREHENSIVE_TEST): $(SRC_DIR)/test/test_freebsd_comprehensive.c $(KERNEL_COMPAT_LIB) $(FREEBSD_ROUTE_LIB)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -pthread \
+		$(SRC_DIR)/test/test_freebsd_comprehensive.c \
+		$(KERNEL_COMPAT_LIB) $(FREEBSD_ROUTE_LIB) \
+		$(PLATFORM_LIBS) -o $@
+
+# Working FreeBSD Components Test
+FREEBSD_COMPONENTS_TEST = $(BIN_DIR)/test_freebsd_components
+$(FREEBSD_COMPONENTS_TEST): $(SRC_DIR)/test/test_freebsd_components.c $(KERNEL_COMPAT_LIB) $(FREEBSD_ROUTE_LIB)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -pthread \
+		$(SRC_DIR)/test/test_freebsd_components.c \
+		$(KERNEL_COMPAT_LIB) $(FREEBSD_ROUTE_LIB) \
+		$(PLATFORM_LIBS) -o $@
+
+test-freebsd: $(FREEBSD_COMPONENTS_TEST)
+	@echo "🚀 Running Comprehensive FreeBSD Components Test..."
+	@echo "   Testing all .c files under src/freebsd/ with Level 2 rmlock threading"
+	./$(FREEBSD_COMPONENTS_TEST)
+
+test-freebsd-quick: $(FREEBSD_COMPONENTS_TEST)
+	@echo "⚡ Running Quick FreeBSD Components Test..."
+	QUICK_TEST=1 ./$(FREEBSD_COMPONENTS_TEST)
 
 # Clean build artifacts
 clean:

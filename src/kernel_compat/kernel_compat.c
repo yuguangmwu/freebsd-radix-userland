@@ -8,6 +8,10 @@
 /* Include standard library functions before our redefinitions */
 #include <stdlib.h>
 
+/* Store standard library functions before we include our header */
+static void* (*std_malloc)(size_t) = malloc;
+static void (*std_free)(void*) = free;
+
 #include "kernel_compat.h"
 
 /* Global variables */
@@ -22,7 +26,7 @@ void* user_malloc(size_t size, int flags) {
     if (flags & M_ZERO) {
         ptr = calloc(1, size);
     } else {
-        ptr = malloc(size);  /* This will use standard malloc since we included stdlib.h first */
+        ptr = std_malloc(size);  /* Use saved standard malloc */
     }
 
     if (!ptr && (flags & M_WAITOK)) {
@@ -34,7 +38,7 @@ void* user_malloc(size_t size, int flags) {
 }
 
 void user_free(void* ptr) {
-    free(ptr);  /* Use standard free */
+    std_free(ptr);  /* Use saved standard free */
 }
 
 /* Printf implementation */

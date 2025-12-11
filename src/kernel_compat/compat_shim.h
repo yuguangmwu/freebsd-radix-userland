@@ -282,10 +282,10 @@ static inline void
 rm_wunlock(struct rmlock *rm)
 {
     int ret;
-    struct timespec now, hold_time;
 
 #ifdef DEBUG_THREADING
     /* Calculate write lock hold time */
+    struct timespec now, hold_time;
     clock_gettime(CLOCK_MONOTONIC, &now);
     hold_time.tv_sec = now.tv_sec - rm->last_acquire.tv_sec;
     hold_time.tv_nsec = now.tv_nsec - rm->last_acquire.tv_nsec;

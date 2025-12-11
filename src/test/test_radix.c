@@ -3,7 +3,8 @@
  */
 
 #include "test_framework.h"
-#include "../include/freebsd_route_adapter.h"
+/* Use new Level 2 compatibility layer directly */
+#include "../kernel_compat/compat_shim.h"
 #include "../freebsd/radix.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -22,11 +23,11 @@ static struct sockaddr_in* make_sockaddr_in(const char* ip, int port) {
 
 /* Test cases */
 static int test_radix_node_head_creation(void) {
-    struct radix_node_head* rnh;
+    struct radix_node_head* rnh = NULL;
 
     /* Test creating a radix node head */
-    if (!rn_inithead((void**)&rnh, AF_INET)) {
-        TEST_FAIL("Failed to create radix node head for AF_INET");
+    if (!rn_inithead((void**)&rnh, 32)) {
+        TEST_FAIL("Failed to create radix node head");
     }
 
     TEST_ASSERT_NOT_NULL(rnh, "Radix node head should not be NULL");
@@ -34,21 +35,19 @@ static int test_radix_node_head_creation(void) {
     TEST_ASSERT_NOT_NULL(rnh->rnh_deladdr, "Delete function should be set");
     TEST_ASSERT_NOT_NULL(rnh->rnh_matchaddr, "Match function should be set");
 
-    /* Clean up */
-    if (rnh->rnh_close) {
-        rnh->rnh_close((struct radix_node*)rnh, NULL);
-    }
+    /* Clean up properly */
+    rn_detachhead((void**)&rnh);
 
     TEST_PASS();
 }
 
 static int test_radix_basic_operations(void) {
-    struct radix_node_head* rnh;
+    struct radix_node_head* rnh = NULL;
     struct radix_node* rn;
     struct sockaddr_in* dest, *mask;
 
     /* Initialize radix tree */
-    if (!rn_inithead((void**)&rnh, AF_INET)) {
+    if (!rn_inithead((void**)&rnh, 32)) {
         TEST_FAIL("Failed to initialize radix tree");
     }
 
@@ -57,9 +56,15 @@ static int test_radix_basic_operations(void) {
     mask = make_sockaddr_in("255.255.255.0", 0);
 
     /* Test adding a node */
+    struct radix_node *nodes = bsd_malloc(2 * sizeof(*nodes), M_RTABLE, M_WAITOK | M_ZERO);
+    if (!nodes) {
+        rn_detachhead((void**)&rnh);
+        TEST_FAIL("Failed to allocate radix nodes");
+    }
+
     rn = rnh->rnh_addaddr((struct sockaddr*)dest,
                          (struct sockaddr*)mask,
-                         &rnh->rh, NULL);
+                         &rnh->rh, nodes);
 
     TEST_ASSERT_NOT_NULL(rn, "Should be able to add a route");
 
@@ -73,42 +78,57 @@ static int test_radix_basic_operations(void) {
                          &rnh->rh);
     TEST_ASSERT_NOT_NULL(rn, "Should be able to delete the route");
 
+    /* Free the nodes after successful deletion */
+    if (rn) {
+        bsd_free(nodes, M_RTABLE);
+    }
+
     /* Verify node is gone */
     rn = rnh->rnh_matchaddr((struct sockaddr*)dest, &rnh->rh);
     TEST_ASSERT_NULL(rn, "Route should be deleted");
 
-    /* Clean up */
-    if (rnh->rnh_close) {
-        rnh->rnh_close((struct radix_node*)rnh, NULL);
-    }
+    /* Clean up properly */
+    rn_detachhead((void**)&rnh);
 
     TEST_PASS();
 }
 
 static int test_radix_longest_match(void) {
-    struct radix_node_head* rnh;
+    struct radix_node_head* rnh = NULL;
     struct radix_node* rn;
     struct sockaddr_in* dest1, *dest2, *mask1, *mask2, *lookup;
 
     /* Initialize radix tree */
-    if (!rn_inithead((void**)&rnh, AF_INET)) {
+    if (!rn_inithead((void**)&rnh, 32)) {
         TEST_FAIL("Failed to initialize radix tree");
     }
 
     /* Add a general route: 192.168.0.0/16 */
     dest1 = make_sockaddr_in("192.168.0.0", 0);
     mask1 = make_sockaddr_in("255.255.0.0", 0);
+    struct radix_node *nodes1 = bsd_malloc(2 * sizeof(*nodes1), M_RTABLE, M_WAITOK | M_ZERO);
+    if (!nodes1) {
+        rn_detachhead((void**)&rnh);
+        TEST_FAIL("Failed to allocate radix nodes1");
+    }
+
     rn = rnh->rnh_addaddr((struct sockaddr*)dest1,
                          (struct sockaddr*)mask1,
-                         &rnh->rh, NULL);
+                         &rnh->rh, nodes1);
     TEST_ASSERT_NOT_NULL(rn, "Should add 192.168.0.0/16 route");
 
     /* Add a more specific route: 192.168.1.0/24 */
     dest2 = make_sockaddr_in("192.168.1.0", 0);
     mask2 = make_sockaddr_in("255.255.255.0", 0);
+    struct radix_node *nodes2 = bsd_malloc(2 * sizeof(*nodes2), M_RTABLE, M_WAITOK | M_ZERO);
+    if (!nodes2) {
+        rn_detachhead((void**)&rnh);
+        TEST_FAIL("Failed to allocate radix nodes2");
+    }
+
     rn = rnh->rnh_addaddr((struct sockaddr*)dest2,
                          (struct sockaddr*)mask2,
-                         &rnh->rh, NULL);
+                         &rnh->rh, nodes2);
     TEST_ASSERT_NOT_NULL(rn, "Should add 192.168.1.0/24 route");
 
     /* Lookup should find the most specific match */
@@ -120,21 +140,19 @@ static int test_radix_longest_match(void) {
     /* Note: In a real implementation, we'd need to compare the actual
      * route data to verify which route was matched */
 
-    /* Clean up */
-    if (rnh->rnh_close) {
-        rnh->rnh_close((struct radix_node*)rnh, NULL);
-    }
+    /* Clean up properly */
+    rn_detachhead((void**)&rnh);
 
     TEST_PASS();
 }
 
 static int test_radix_multiple_routes(void) {
-    struct radix_node_head* rnh;
+    struct radix_node_head* rnh = NULL;
     struct radix_node* rn;
     int route_count = 0;
 
     /* Initialize radix tree */
-    if (!rn_inithead((void**)&rnh, AF_INET)) {
+    if (!rn_inithead((void**)&rnh, 32)) {
         TEST_FAIL("Failed to initialize radix tree");
     }
 
@@ -150,9 +168,15 @@ static int test_radix_multiple_routes(void) {
 
     for (int i = 0; i < 4; i++) {
         struct sockaddr_in* dest = make_sockaddr_in(routes[i], 0);
+        struct radix_node *nodes = bsd_malloc(2 * sizeof(*nodes), M_RTABLE, M_WAITOK | M_ZERO);
+        if (!nodes) {
+            rn_detachhead((void**)&rnh);
+            TEST_FAIL("Failed to allocate radix nodes for route %d", i);
+        }
+
         rn = rnh->rnh_addaddr((struct sockaddr*)dest,
                              (struct sockaddr*)mask,
-                             &rnh->rh, NULL);
+                             &rnh->rh, nodes);
         if (rn) {
             route_count++;
         }
@@ -167,10 +191,8 @@ static int test_radix_multiple_routes(void) {
         TEST_ASSERT_NOT_NULL(rn, "Should find route for %s", routes[i]);
     }
 
-    /* Clean up */
-    if (rnh->rnh_close) {
-        rnh->rnh_close((struct radix_node*)rnh, NULL);
-    }
+    /* Clean up properly */
+    rn_detachhead((void**)&rnh);
 
     TEST_PASS();
 }

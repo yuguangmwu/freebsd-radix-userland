@@ -4,7 +4,8 @@
 
 #include "test_framework.h"
 #include "../include/route_lib.h"
-#include "../include/freebsd_route_adapter.h"
+/* Use new Level 2 compatibility layer directly */
+#include "../kernel_compat/compat_shim.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>

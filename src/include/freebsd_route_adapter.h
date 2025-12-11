@@ -10,9 +10,8 @@
 /* Ensure we're in userland mode */
 #undef _KERNEL
 
-/* Include our compatibility layer first */
-#include "../kernel_compat/kernel_compat.h"
-#include "../kernel_compat/sys_compat.h"
+/* Include our NEW Level 2 compatibility layer */
+#include "../kernel_compat/compat_shim.h"
 
 /* Define FreeBSD kernel options that affect compilation */
 #define opt_inet_h_   1
@@ -60,9 +59,7 @@
 /* FreeBSD memory allocation types (unused in userland but needed for compilation) */
 #define MALLOC_DECLARE(type)  /* Empty declaration for userland */
 MALLOC_DECLARE(M_RTABLE);
-#define M_RTABLE ((void*)1)
-#define M_IFADDR ((void*)2)
-#define M_IFMADDR ((void*)3)
+/* M_RTABLE, M_IFADDR, M_IFMADDR now provided by compat_shim.h */
 
 /* Thread/process stubs */
 struct thread {
