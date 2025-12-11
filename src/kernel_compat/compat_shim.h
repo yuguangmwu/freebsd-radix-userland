@@ -96,30 +96,260 @@ static inline void bsd_free(void* ptr, int type) {
 #define malloc(size, type, flags) bsd_malloc(size, type, flags)
 #define free(ptr, type) bsd_free(ptr, type)
 
-/* === Phase 5: Locking Primitives (No-op for single-threaded) === */
-struct rmlock { int dummy; };
-struct rm_priotracker { int dummy; };
-struct mtx { int dummy; };
+/* === Phase 5: Level 2 Threading - Real pthread-based rmlock === */
 
-#define rm_init_flags(lock, name, flags) do { (void)(lock); } while(0)
-#define rm_destroy(lock) do { (void)(lock); } while(0)
-#define rm_rlock(lock, tracker) do { (void)(lock); (void)(tracker); } while(0)
-#define rm_runlock(lock, tracker) do { (void)(lock); (void)(tracker); } while(0)
-#define rm_wlock(lock) do { (void)(lock); } while(0)
-#define rm_wunlock(lock) do { (void)(lock); } while(0)
-#define rm_assert(lock, what) do { (void)(lock); (void)(what); } while(0)
+/*
+ * FreeBSD rmlock (Read-Mostly Lock) Implementation using pthread_rwlock_t
+ *
+ * Provides:
+ * - Multiple concurrent readers
+ * - Single exclusive writer
+ * - Reader preference (FreeBSD rmlock behavior)
+ * - Lock tracking and debugging
+ */
 
-#define RIB_RLOCK(rh) do { (void)(rh); } while(0)
-#define RIB_RUNLOCK(rh) do { (void)(rh); } while(0)
-#define RIB_WLOCK(rh) do { (void)(rh); } while(0)
-#define RIB_WUNLOCK(rh) do { (void)(rh); } while(0)
-#define RIB_LOCK_ASSERT(rh) do { (void)(rh); } while(0)
-#define RIB_WLOCK_ASSERT(rh) do { (void)(rh); } while(0)
-
-/* Lock flags */
+/* Lock flags - must be defined before function implementations */
 #define RM_DUPOK    0x01
 #define RA_LOCKED   0x01
 #define RA_WLOCKED  0x02
+
+struct rmlock {
+    pthread_rwlock_t    rw_lock;        /* Actual pthread read-write lock */
+    const char         *name;           /* Lock name for debugging */
+    pthread_mutex_t     stats_lock;     /* Protects statistics */
+    uint32_t           readers;         /* Current reader count */
+    uint32_t           writers;         /* Current writer count (0 or 1) */
+    uint64_t           total_reads;     /* Total read lock acquisitions */
+    uint64_t           total_writes;    /* Total write lock acquisitions */
+#ifdef DEBUG_THREADING
+    pthread_t          writer_thread;   /* Current writer thread */
+    struct timespec    last_acquire;    /* Last lock acquire time */
+#endif
+};
+
+struct rm_priotracker {
+    pthread_t          thread_id;       /* Thread holding read lock */
+    struct rmlock     *lock_ptr;        /* Back pointer to lock */
+    struct timespec    acquire_time;    /* When read lock was acquired */
+};
+
+struct mtx {
+    pthread_mutex_t    mutex;
+    const char        *name;
+};
+
+/* === rmlock Function Implementations === */
+
+static inline int
+rm_init_flags(struct rmlock *rm, const char *name, int flags)
+{
+    int ret;
+
+    memset(rm, 0, sizeof(*rm));
+    rm->name = name ? name : "unnamed_rmlock";
+
+    /* Initialize pthread read-write lock with reader preference */
+    pthread_rwlockattr_t attr;
+    pthread_rwlockattr_init(&attr);
+    #ifdef __APPLE__
+    /* macOS doesn't have PTHREAD_RWLOCK_PREFER_READER_NP, but defaults to reader preference */
+    #endif
+
+    ret = pthread_rwlock_init(&rm->rw_lock, &attr);
+    pthread_rwlockattr_destroy(&attr);
+    if (ret != 0) {
+        printf("[RMLOCK] ERROR: Failed to init rwlock '%s': %d\n", rm->name, ret);
+        return ret;
+    }
+
+    ret = pthread_mutex_init(&rm->stats_lock, NULL);
+    if (ret != 0) {
+        pthread_rwlock_destroy(&rm->rw_lock);
+        printf("[RMLOCK] ERROR: Failed to init stats lock '%s': %d\n", rm->name, ret);
+        return ret;
+    }
+
+    printf("[RMLOCK] Initialized '%s' at %p (flags=0x%x)\n", rm->name, (void*)rm, flags);
+    return 0;
+}
+
+static inline void
+rm_destroy(struct rmlock *rm)
+{
+    if (rm->readers > 0 || rm->writers > 0) {
+        printf("[RMLOCK] WARNING: Destroying '%s' with active locks (R:%u W:%u)\n",
+               rm->name, rm->readers, rm->writers);
+    }
+
+    printf("[RMLOCK] Destroying '%s' (Total: R=%llu W=%llu)\n",
+           rm->name, (unsigned long long)rm->total_reads, (unsigned long long)rm->total_writes);
+
+    pthread_rwlock_destroy(&rm->rw_lock);
+    pthread_mutex_destroy(&rm->stats_lock);
+}
+
+static inline void
+rm_rlock(struct rmlock *rm, struct rm_priotracker *tracker)
+{
+    int ret;
+
+    /* Acquire read lock */
+    ret = pthread_rwlock_rdlock(&rm->rw_lock);
+    if (ret != 0) {
+        printf("[RMLOCK] FATAL: Read lock failed on '%s': %d\n", rm->name, ret);
+        abort();
+    }
+
+    /* Set up tracker */
+    tracker->thread_id = pthread_self();
+    tracker->lock_ptr = rm;
+    clock_gettime(CLOCK_MONOTONIC, &tracker->acquire_time);
+
+    /* Update statistics */
+    pthread_mutex_lock(&rm->stats_lock);
+    rm->readers++;
+    rm->total_reads++;
+    pthread_mutex_unlock(&rm->stats_lock);
+
+#ifdef DEBUG_THREADING_VERBOSE
+    printf("[RMLOCK] Read lock acquired on '%s' by thread %lu (active readers: %u)\n",
+           rm->name, (unsigned long)tracker->thread_id, rm->readers);
+#endif
+}
+
+static inline void
+rm_runlock(struct rmlock *rm, struct rm_priotracker *tracker)
+{
+    int ret;
+    struct timespec now, hold_time;
+
+    /* Calculate how long we held the lock */
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    hold_time.tv_sec = now.tv_sec - tracker->acquire_time.tv_sec;
+    hold_time.tv_nsec = now.tv_nsec - tracker->acquire_time.tv_nsec;
+    if (hold_time.tv_nsec < 0) {
+        hold_time.tv_sec--;
+        hold_time.tv_nsec += 1000000000L;
+    }
+
+    /* Update statistics */
+    pthread_mutex_lock(&rm->stats_lock);
+    rm->readers--;
+    pthread_mutex_unlock(&rm->stats_lock);
+
+    /* Release read lock */
+    ret = pthread_rwlock_unlock(&rm->rw_lock);
+    if (ret != 0) {
+        printf("[RMLOCK] FATAL: Read unlock failed on '%s': %d\n", rm->name, ret);
+        abort();
+    }
+
+#ifdef DEBUG_THREADING_VERBOSE
+    printf("[RMLOCK] Read lock released on '%s' by thread %lu (held %ld.%09ld sec)\n",
+           rm->name, (unsigned long)tracker->thread_id, hold_time.tv_sec, hold_time.tv_nsec);
+#endif
+}
+
+static inline void
+rm_wlock(struct rmlock *rm)
+{
+    int ret;
+
+    /* Acquire exclusive write lock */
+    ret = pthread_rwlock_wrlock(&rm->rw_lock);
+    if (ret != 0) {
+        printf("[RMLOCK] FATAL: Write lock failed on '%s': %d\n", rm->name, ret);
+        abort();
+    }
+
+    /* Update statistics */
+    pthread_mutex_lock(&rm->stats_lock);
+    rm->writers = 1;
+    rm->total_writes++;
+#ifdef DEBUG_THREADING
+    rm->writer_thread = pthread_self();
+    clock_gettime(CLOCK_MONOTONIC, &rm->last_acquire);
+#endif
+    pthread_mutex_unlock(&rm->stats_lock);
+
+#ifdef DEBUG_THREADING_VERBOSE
+    printf("[RMLOCK] Write lock acquired on '%s' by thread %lu\n",
+           rm->name, (unsigned long)pthread_self());
+#endif
+}
+
+static inline void
+rm_wunlock(struct rmlock *rm)
+{
+    int ret;
+    struct timespec now, hold_time;
+
+#ifdef DEBUG_THREADING
+    /* Calculate write lock hold time */
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    hold_time.tv_sec = now.tv_sec - rm->last_acquire.tv_sec;
+    hold_time.tv_nsec = now.tv_nsec - rm->last_acquire.tv_nsec;
+    if (hold_time.tv_nsec < 0) {
+        hold_time.tv_sec--;
+        hold_time.tv_nsec += 1000000000L;
+    }
+#endif
+
+    /* Update statistics */
+    pthread_mutex_lock(&rm->stats_lock);
+    rm->writers = 0;
+    pthread_mutex_unlock(&rm->stats_lock);
+
+    /* Release write lock */
+    ret = pthread_rwlock_unlock(&rm->rw_lock);
+    if (ret != 0) {
+        printf("[RMLOCK] FATAL: Write unlock failed on '%s': %d\n", rm->name, ret);
+        abort();
+    }
+
+#ifdef DEBUG_THREADING_VERBOSE
+    printf("[RMLOCK] Write lock released on '%s' by thread %lu (held %ld.%09ld sec)\n",
+           rm->name, (unsigned long)pthread_self(), hold_time.tv_sec, hold_time.tv_nsec);
+#endif
+}
+
+static inline void
+rm_assert(struct rmlock *rm, int what)
+{
+#ifdef DEBUG_THREADING
+    pthread_mutex_lock(&rm->stats_lock);
+    switch (what) {
+    case RA_LOCKED:
+        /* Assert either read or write locked */
+        if (rm->readers == 0 && rm->writers == 0) {
+            printf("[RMLOCK] ASSERTION FAILED: '%s' not locked\n", rm->name);
+            pthread_mutex_unlock(&rm->stats_lock);
+            abort();
+        }
+        break;
+    case RA_WLOCKED:
+        /* Assert write locked by current thread */
+        if (rm->writers == 0) {
+            printf("[RMLOCK] ASSERTION FAILED: '%s' not write locked\n", rm->name);
+            pthread_mutex_unlock(&rm->stats_lock);
+            abort();
+        }
+        if (rm->writer_thread != pthread_self()) {
+            printf("[RMLOCK] ASSERTION FAILED: '%s' write locked by different thread\n", rm->name);
+            pthread_mutex_unlock(&rm->stats_lock);
+            abort();
+        }
+        break;
+    }
+    pthread_mutex_unlock(&rm->stats_lock);
+#else
+    /* No-op in non-debug builds */
+    (void)rm;
+    (void)what;
+#endif
+}
+
+/* Keep the same RIB_* macros that FreeBSD code uses - they'll now call real locks */
 
 /* === Phase 6: Kernel Macros === */
 #define KASSERT(exp, msg) assert(exp)
