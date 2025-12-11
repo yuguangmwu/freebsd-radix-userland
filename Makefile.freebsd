@@ -1,0 +1,108 @@
+# FreeBSD Routing Library - FreeBSD Radix Integration
+# Phase 2: Use actual FreeBSD radix.c code
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -O0 -g -DDEBUG -DUSERLAND_RADIX
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Integration test sources
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+RADIX_ADAPTER_SOURCES = src/radix_adapter.c
+FREEBSD_RADIX_SOURCES = src/freebsd/radix.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+RADIX_TEST_SOURCES = src/test/test_radix_integration.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_ADAPTER_OBJS = $(RADIX_ADAPTER_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+FREEBSD_RADIX_OBJS = $(FREEBSD_RADIX_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_TEST_OBJS = $(RADIX_TEST_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+RADIX_ADAPTER_LIB = $(LIB_DIR)/libradix_adapter.a
+FREEBSD_RADIX_LIB = $(LIB_DIR)/libfreebsd_radix.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_RADIX_INTEGRATION_EXE = $(BIN_DIR)/test_radix_integration
+
+# Default target - build integration test with FreeBSD radix
+all: $(TEST_RADIX_INTEGRATION_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build compatibility library
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build radix adapter library
+$(RADIX_ADAPTER_LIB): $(RADIX_ADAPTER_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build test framework
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build FreeBSD radix library
+$(FREEBSD_RADIX_LIB): $(FREEBSD_RADIX_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build integration test executable
+$(TEST_RADIX_INTEGRATION_EXE): $(RADIX_TEST_OBJS) $(RADIX_ADAPTER_LIB) $(FREEBSD_RADIX_LIB) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Phony targets
+.PHONY: all clean test help compat-test
+
+# Test compatibility layer (this works)
+compat-test:
+	@echo "Testing compatibility layer..."
+	@$(MAKE) -f Makefile.compat test
+
+# Try to build radix integration with FreeBSD code
+test: $(TEST_RADIX_INTEGRATION_EXE)
+	@echo "Running FreeBSD radix integration tests..."
+	./$(TEST_RADIX_INTEGRATION_EXE)
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - FreeBSD Radix Integration Build"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all           - Build FreeBSD radix integration test (default)"
+	@echo "  compat-test   - Test compatibility layer (should work)"
+	@echo "  test          - Build and run FreeBSD radix integration tests"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "This is Phase 2: Using actual FreeBSD radix.c code"
+
+# Show what we're building
+info:
+	@echo "Build Configuration:"
+	@echo "  Compiler: $(CC)"
+	@echo "  CFLAGS: $(CFLAGS)"
+	@echo "  Platform: macOS"
+	@echo "  Mode: FreeBSD radix integration (real code)"

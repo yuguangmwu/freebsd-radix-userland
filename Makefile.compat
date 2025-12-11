@@ -1,0 +1,89 @@
+# FreeBSD Routing Library - Ultra-Minimal Test
+# Phase 0: Verify kernel compatibility layer works
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -Werror -O0 -g -DDEBUG
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Ultra-minimal sources (compatibility test only)
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+COMPAT_TEST_SOURCES = src/test/test_compat_minimal.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+COMPAT_TEST_OBJS = $(COMPAT_TEST_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_COMPAT_EXE = $(BIN_DIR)/test_compat
+
+# Default target
+all: $(TEST_COMPAT_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build compatibility library
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build test framework
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build test executable
+$(TEST_COMPAT_EXE): $(COMPAT_TEST_OBJS) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Phony targets
+.PHONY: all clean test help
+
+# Run tests
+test: $(TEST_COMPAT_EXE)
+	@echo "Running compatibility tests..."
+	./$(TEST_COMPAT_EXE)
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - Ultra-Minimal Test"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all    - Build compatibility test (default)"
+	@echo "  test   - Build and run compatibility tests"
+	@echo "  clean  - Remove build artifacts"
+	@echo "  help   - Show this help message"
+	@echo ""
+	@echo "This is Phase 0: Testing only the kernel compatibility layer"
+	@echo "to validate our approach before integrating FreeBSD code."
+
+# Show what we're building
+info:
+	@echo "Build Configuration:"
+	@echo "  Compiler: $(CC)"
+	@echo "  CFLAGS: $(CFLAGS)"
+	@echo "  Platform: macOS"
+	@echo "  Mode: Ultra-minimal (compatibility test only)"

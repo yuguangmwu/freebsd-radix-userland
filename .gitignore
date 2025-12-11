@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+
+# Test outputs
+*.log
+*_test_results.log
+10m_test_results.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+
+# Executables (but keep source)
+test_radix_*
+!src/test/test_radix_*.c
+!src/test/test_radix_*.h

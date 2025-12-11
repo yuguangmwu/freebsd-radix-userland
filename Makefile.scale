@@ -1,0 +1,134 @@
+# FreeBSD Routing Library - Radix Scale Tests
+# Large-scale stress testing with 100K+ routes
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -O2 -g -DDEBUG -DUSERLAND_RADIX
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Scale test sources
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+FREEBSD_RADIX_SOURCES = src/freebsd/radix.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+RADIX_SCALE_TEST_SOURCES = src/test/test_radix_scale.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+FREEBSD_RADIX_OBJS = $(FREEBSD_RADIX_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_SCALE_TEST_OBJS = $(RADIX_SCALE_TEST_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+FREEBSD_RADIX_LIB = $(LIB_DIR)/libfreebsd_radix.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_RADIX_SCALE_EXE = $(BIN_DIR)/test_radix_scale
+
+# Default target
+all: $(TEST_RADIX_SCALE_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files (with O2 optimization for performance)
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build libraries
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(FREEBSD_RADIX_LIB): $(FREEBSD_RADIX_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build scale test executable
+$(TEST_RADIX_SCALE_EXE): $(RADIX_SCALE_TEST_OBJS) $(FREEBSD_RADIX_LIB) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Run scale tests
+scale: $(TEST_RADIX_SCALE_EXE)
+	@echo "🚀 Running large-scale radix tree tests..."
+	@echo "This will test 10K and 100K route operations"
+	@echo ""
+	time ./$(TEST_RADIX_SCALE_EXE) 2>&1 | tee scale_test.log
+	@echo ""
+	@echo "📊 Scale test results saved to scale_test.log"
+
+# Quick scale test (10K routes only)
+scale-quick: $(TEST_RADIX_SCALE_EXE)
+	@echo "⚡ Running quick scale test (10K routes)..."
+	./$(TEST_RADIX_SCALE_EXE) | grep -E "(10K|Test Summary|routes/ms)"
+
+# Memory profiling (requires valgrind on Linux, leaks on macOS)
+scale-memory: $(TEST_RADIX_SCALE_EXE)
+	@echo "🧠 Running scale test with memory profiling..."
+	@if command -v leaks >/dev/null 2>&1; then \
+		echo "Using macOS leaks tool..."; \
+		leaks -atExit -- ./$(TEST_RADIX_SCALE_EXE); \
+	elif command -v valgrind >/dev/null 2>&1; then \
+		echo "Using valgrind..."; \
+		valgrind --leak-check=full --show-leak-kinds=all ./$(TEST_RADIX_SCALE_EXE); \
+	else \
+		echo "No memory profiling tools found, running normal test..."; \
+		./$(TEST_RADIX_SCALE_EXE); \
+	fi
+
+# Performance profiling
+scale-profile: $(TEST_RADIX_SCALE_EXE)
+	@echo "📈 Running performance profiling..."
+	@if command -v perf >/dev/null 2>&1; then \
+		echo "Using perf..."; \
+		perf record -g ./$(TEST_RADIX_SCALE_EXE); \
+		perf report; \
+	elif command -v instruments >/dev/null 2>&1; then \
+		echo "Use: instruments -t 'Time Profiler' ./$(TEST_RADIX_SCALE_EXE)"; \
+		./$(TEST_RADIX_SCALE_EXE); \
+	else \
+		echo "No profiling tools found, running with timing..."; \
+		time ./$(TEST_RADIX_SCALE_EXE); \
+	fi
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR) scale_test.log
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - Scale Test Build"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all           - Build scale test executable"
+	@echo "  scale         - Run full scale tests (10K + 100K routes)"
+	@echo "  scale-quick   - Run quick test (10K routes only)"
+	@echo "  scale-memory  - Run with memory leak detection"
+	@echo "  scale-profile - Run with performance profiling"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "Scale tests validate:"
+	@echo "  • 10K route add/lookup/delete operations"
+	@echo "  • 100K route stress testing"
+	@echo "  • Different route patterns (sequential, hierarchical, sparse)"
+	@echo "  • Performance metrics and memory usage"
+	@echo ""
+	@echo "Expected performance (rough guidelines):"
+	@echo "  • Add rate: >1000 routes/ms"
+	@echo "  • Lookup rate: >5000 lookups/ms"
+	@echo "  • Delete rate: >1000 deletes/ms"
+
+.PHONY: all scale scale-quick scale-memory scale-profile clean help

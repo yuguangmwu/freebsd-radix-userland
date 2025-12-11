@@ -1,0 +1,100 @@
+# FreeBSD Routing Library - 262K Debug Test
+# Debug the exact cause of the 2^18 route limit
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -O0 -g -DDEBUG -DUSERLAND_RADIX
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Debug test sources
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+FREEBSD_RADIX_SOURCES = src/freebsd/radix.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+DEBUG_262K_TEST_SOURCES = src/test/test_262k_debug.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+FREEBSD_RADIX_OBJS = $(FREEBSD_RADIX_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+DEBUG_262K_TEST_OBJS = $(DEBUG_262K_TEST_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+FREEBSD_RADIX_LIB = $(LIB_DIR)/libfreebsd_radix.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_262K_DEBUG_EXE = $(BIN_DIR)/test_262k_debug
+
+# Default target
+all: $(TEST_262K_DEBUG_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build libraries
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(FREEBSD_RADIX_LIB): $(FREEBSD_RADIX_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build debug test executable
+$(TEST_262K_DEBUG_EXE): $(DEBUG_262K_TEST_OBJS) $(FREEBSD_RADIX_LIB) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Run debug test
+debug-262k: $(TEST_262K_DEBUG_EXE)
+	@echo "🔍 Running 262K limit debug test..."
+	@echo "This will test up to 300K routes to find the exact failure point"
+	@echo ""
+	./$(TEST_262K_DEBUG_EXE) 2>&1 | tee debug_262k.log
+	@echo ""
+	@echo "🔍 Debug results saved to debug_262k.log"
+
+# Quick debug (just first failure)
+debug-quick: $(TEST_262K_DEBUG_EXE)
+	@echo "⚡ Running quick debug test..."
+	timeout 30 ./$(TEST_262K_DEBUG_EXE) || true
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR) debug_262k.log
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - 262K Debug Build"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all           - Build debug test executable"
+	@echo "  debug-262k    - Run full debug test (up to 300K routes)"
+	@echo "  debug-quick   - Run quick debug test (30s timeout)"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "This debug test will:"
+	@echo "  • Test route addition up to 300K routes"
+	@echo "  • Stop at the first failure and analyze why"
+	@echo "  • Check for memory allocation issues"
+	@echo "  • Check for route generation duplicates"
+	@echo "  • Examine radix tree internal state"
+	@echo "  • Report exact failure point and conditions"
+
+.PHONY: all debug-262k debug-quick clean help

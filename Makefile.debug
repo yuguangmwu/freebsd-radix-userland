@@ -1,0 +1,92 @@
+# FreeBSD Routing Library - Radix Debug Test
+# Investigation of multiple route addition issue
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -O0 -g -DDEBUG -DUSERLAND_RADIX -DRADIX_DEBUG
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Debug test sources
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+RADIX_ADAPTER_SOURCES = src/radix_adapter.c
+FREEBSD_RADIX_SOURCES = src/freebsd/radix.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+RADIX_DEBUG_TEST_SOURCES = src/test/test_radix_debug.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_ADAPTER_OBJS = $(RADIX_ADAPTER_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+FREEBSD_RADIX_OBJS = $(FREEBSD_RADIX_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_DEBUG_TEST_OBJS = $(RADIX_DEBUG_TEST_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+RADIX_ADAPTER_LIB = $(LIB_DIR)/libradix_adapter.a
+FREEBSD_RADIX_LIB = $(LIB_DIR)/libfreebsd_radix.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_RADIX_DEBUG_EXE = $(BIN_DIR)/test_radix_debug
+
+# Default target - build and run debug test
+all: $(TEST_RADIX_DEBUG_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build libraries
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(RADIX_ADAPTER_LIB): $(RADIX_ADAPTER_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(FREEBSD_RADIX_LIB): $(FREEBSD_RADIX_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build debug test executable
+$(TEST_RADIX_DEBUG_EXE): $(RADIX_DEBUG_TEST_OBJS) $(RADIX_ADAPTER_LIB) $(FREEBSD_RADIX_LIB) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Run debug test
+debug: $(TEST_RADIX_DEBUG_EXE)
+	@echo "Running radix debug test..."
+	./$(TEST_RADIX_DEBUG_EXE) 2>&1 | tee debug.log
+	@echo ""
+	@echo "Debug output saved to debug.log"
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR) debug.log
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - Radix Debug Build"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all     - Build debug test (default)"
+	@echo "  debug   - Build and run debug test with logging"
+	@echo "  clean   - Remove build artifacts"
+	@echo "  help    - Show this help message"
+	@echo ""
+	@echo "This debug test investigates multiple route addition issues"
+
+.PHONY: all debug clean help

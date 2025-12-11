@@ -1,0 +1,105 @@
+# FreeBSD Routing Library - Minimal Radix Build
+# Phase 1: Get radix tree working in userland
+
+CC = clang
+CFLAGS = -std=c99 -Wall -Wextra -Werror -O0 -g -DDEBUG
+PLATFORM_CFLAGS = -D__APPLE_USE_RFC_3542
+
+# Build directories
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
+BIN_DIR = $(BUILD_DIR)/bin
+LIB_DIR = $(BUILD_DIR)/lib
+
+# Include paths
+INCLUDES = -Isrc/include -Isrc/kernel_compat -Isrc/freebsd
+
+# Minimal sources (radix-only)
+COMPAT_SOURCES = src/kernel_compat/compat_shim.c
+RADIX_SOURCES = src/freebsd/radix_userland.c
+MINIMAL_SOURCES = src/radix_minimal.c
+TEST_FRAMEWORK_SOURCES = src/test/test_framework.c
+
+# Object files
+COMPAT_OBJS = $(COMPAT_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+RADIX_OBJS = $(RADIX_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+MINIMAL_OBJS = $(MINIMAL_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+TEST_FRAMEWORK_OBJS = $(TEST_FRAMEWORK_SOURCES:src/%.c=$(OBJ_DIR)/%.o)
+
+# Libraries
+COMPAT_LIB = $(LIB_DIR)/libcompat.a
+RADIX_LIB = $(LIB_DIR)/libradix.a
+TEST_FRAMEWORK_LIB = $(LIB_DIR)/libtest.a
+
+# Test executable
+TEST_RADIX_EXE = $(BIN_DIR)/test_radix_minimal
+
+# Default target
+all: $(TEST_RADIX_EXE)
+
+# Create directories
+$(OBJ_DIR) $(BIN_DIR) $(LIB_DIR):
+	@mkdir -p $@
+
+# Compile object files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build compatibility library
+$(COMPAT_LIB): $(COMPAT_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build radix library
+$(RADIX_LIB): $(RADIX_OBJS) $(COMPAT_LIB) | $(LIB_DIR)
+	ar rcs $@ $(RADIX_OBJS)
+
+# Build minimal wrapper library
+$(LIB_DIR)/libradix_minimal.a: $(MINIMAL_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Build test framework
+$(TEST_FRAMEWORK_LIB): $(TEST_FRAMEWORK_OBJS) | $(LIB_DIR)
+	ar rcs $@ $^
+
+# Test program source
+$(OBJ_DIR)/test/test_radix_minimal.o: src/test/test_radix_minimal.c | $(OBJ_DIR)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(PLATFORM_CFLAGS) $(INCLUDES) -c $< -o $@
+
+# Build test executable
+$(TEST_RADIX_EXE): $(OBJ_DIR)/test/test_radix_minimal.o $(LIB_DIR)/libradix_minimal.a $(RADIX_LIB) $(COMPAT_LIB) $(TEST_FRAMEWORK_LIB) | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+# Phony targets
+.PHONY: all clean test help
+
+# Run tests
+test: $(TEST_RADIX_EXE)
+	@echo "Running radix tree tests..."
+	./$(TEST_RADIX_EXE)
+
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Help
+help:
+	@echo "FreeBSD Routing Library - Radix-Only Build"
+	@echo ""
+	@echo "Available targets:"
+	@echo "  all    - Build radix library and tests (default)"
+	@echo "  test   - Build and run tests"
+	@echo "  clean  - Remove build artifacts"
+	@echo "  help   - Show this help message"
+	@echo ""
+	@echo "This is Phase 1: Building only the radix tree functionality"
+	@echo "to validate the kernel compatibility layer."
+
+# Show what we're building
+info:
+	@echo "Build Configuration:"
+	@echo "  Compiler: $(CC)"
+	@echo "  CFLAGS: $(CFLAGS)"
+	@echo "  Platform: macOS"
+	@echo "  Mode: Radix-only (minimal)"
